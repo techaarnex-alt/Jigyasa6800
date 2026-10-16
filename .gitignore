@@ -11,5 +11,6 @@ Thumbs.db
 
 # Private operational data and exported financial/customer documents
 data.json
+data.json.*.tmp
 outputs/
 *.jpeg

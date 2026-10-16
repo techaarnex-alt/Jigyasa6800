@@ -21,8 +21,8 @@ Jigyasa Group Of Companies — Website Code
    Cheque-alert Notes are protected from deletion.
 
 4. data.json
-   -> Local persistent data for the staff software. Records are saved here
-      when the local server is running.
+   -> Local persistent data for the staff software. It starts empty and is
+      created automatically when the server starts.
 
 The public website has a Software Login button. The staff software uses the
 same green, gold and blue visual style, while keeping the operational tools
@@ -34,7 +34,6 @@ signed-in user change the starter password.
 Contact details already filled in:
 - Address: Sector 14/105, Vrindavan Yojan, Telibagh, Lucknow – 226029
 - Phone: +91 93360 81002
-- Email: info@jigyasainfratech.com
 
 Note: "current sites" (Vrindavan Yojna, Krishna Vihar Extension,
 Ganga Residency) and their prices/plot sizes are placeholder examples
@@ -54,20 +53,21 @@ Press Ctrl+C in the terminal to stop the local server.
 Staff accounts and operational data
 -----------------------------------
 
-`data.json` contains private staff accounts and operational records, so it is
-intentionally excluded from version control. Create and manage it only in a
-private, access-controlled environment. The administrator can create Employee,
-Franchise, Associate, and Account logins from Admin → Login & Access
-Management.
+`data.json` starts with no accounts or records and is intentionally excluded
+from version control. On the first visit to `/software`, create a private
+administrator account with a password of at least 8 characters, including
+uppercase, lowercase, and a number. That administrator can then create real
+Employee, Franchise, Partner, and Account logins from Admin → Login & Access
+Management. Do not commit or share `data.json`.
 
 Access separation
 -----------------
 
 The Admin panel and its protected records are available only to the
 Administrator role. Franchise logins have buyer, booking, project-status,
-pendency, EMI/custom dues, sale-report, and plot-hold workspaces. Associate
+pendency, EMI/custom dues, sale-report, and plot-hold workspaces. Partner
 logins have buyer, project-status, pendency, EMI/custom dues, and sale-report
 workspaces only: Booking and Plot Hold are unavailable. Account logins have
 only Expenses and Reports, where project expenses are shown separately from all
-other expenses. Franchise and Associate records are linked to their login ID;
+other expenses. Franchise and Partner records are linked to their login ID;
 Project Status and Sale Report are read-only in those workspaces.

@@ -3,23 +3,23 @@ const { randomBytes, scryptSync, timingSafeEqual } = require("node:crypto");
 const { readFile, rename, writeFile } = require("node:fs/promises");
 const path = require("node:path");
 
-const host = "127.0.0.1";
+const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 5173);
 const root = __dirname;
 const databasePath = path.join(root, "data.json");
 const sessions = new Map();
 const sessionDuration = 1000 * 60 * 60 * 8;
 let databaseMutationQueue = Promise.resolve();
-const supportedModules = new Set(["buyers", "project-status", "registration", "promoter", "daybook", "investor", "registry", "hr", "attendance", "follow-up", "calls", "kisan", "expenses", "report", "admin", "accounts", "notes", "plot-management", "partner-management", "finance-management", "land-management", "driver-management", "vehicle-management", "crm", "visitor-management", "customer-management", "task-management", "project-report", "pending-balance-report", "franchise-buyers", "franchise-booking", "franchise-pendency", "franchise-dues", "franchise-sale-report", "franchise-plot-hold", "franchise-associates", "franchise-associate-accounts", "franchise-associate-transactions"]);
+const supportedModules = new Set(["buyers", "project-status", "registration", "promoter", "daybook", "investor", "registry", "hr", "attendance", "follow-up", "calls", "kisan", "expenses", "report", "admin", "accounts", "notes", "plot-management", "partner-management", "finance-management", "land-management", "driver-management", "vehicle-management", "crm", "visitor-management", "customer-management", "task-management", "project-report", "pending-balance-report", "franchise-buyers", "franchise-booking", "franchise-pendency", "franchise-dues", "franchise-sale-report", "franchise-plot-hold", "franchise-partners", "franchise-partner-accounts", "franchise-partner-transactions"]);
 const adminOnlyModules = new Set(["investor", "kisan", "report", "accounts", "finance-management", "project-report", "pending-balance-report", "admin"]);
 const employeeModules = new Set(["buyers", "project-status"]);
 const franchiseModules = new Set(["franchise-buyers", "franchise-booking", "project-status", "franchise-pendency", "franchise-dues", "franchise-sale-report", "franchise-plot-hold"]);
-const associateModules = new Set(["franchise-buyers", "project-status", "franchise-pendency", "franchise-dues", "franchise-sale-report"]);
-const accountModules = new Set(["expenses", "report", "registration", "daybook", "registry", "plot-management", "land-management", "franchise-associate-accounts"]);
+const partnerModules = new Set(["franchise-buyers", "project-status", "franchise-pendency", "franchise-dues", "franchise-sale-report"]);
+const accountModules = new Set(["expenses", "report", "registration", "daybook", "registry", "plot-management", "land-management", "franchise-partner-accounts"]);
 // Accounts staff need the partner list to select a payee, but cannot create or edit partners.
-const accountReadOnlyModules = new Set(["franchise-associates"]);
+const accountReadOnlyModules = new Set(["franchise-partners"]);
 const partnerReadOnlyModules = new Set(["project-status", "franchise-sale-report"]);
-const managedRoles = new Set(["Employee", "Franchise", "Associate", "Account"]);
+const managedRoles = new Set(["Employee", "Franchise", "Partner", "Account"]);
 const files = new Map([
   ["/", "jigyasa-infratech-website.html"],
   ["/index.html", "jigyasa-infratech-website.html"],
@@ -39,8 +39,27 @@ function send(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+function emptyDatabase() {
+  return { users: [], records: [], activity: [] };
+}
+
+function normalizeDatabase(data) {
+  return {
+    users: Array.isArray(data?.users) ? data.users : [],
+    records: Array.isArray(data?.records) ? data.records : [],
+    activity: Array.isArray(data?.activity) ? data.activity : [],
+  };
+}
+
 async function readDatabase() {
-  return JSON.parse(await readFile(databasePath, "utf8"));
+  try {
+    return normalizeDatabase(JSON.parse(await readFile(databasePath, "utf8")));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    const data = emptyDatabase();
+    await writeDatabase(data);
+    return data;
+  }
 }
 
 async function writeDatabase(data) {
@@ -84,16 +103,44 @@ function cleanText(value, limit = 500) {
   return String(value || "").trim().slice(0, limit);
 }
 
+function validUsername(username) {
+  return /^[a-z0-9._-]{3,80}$/.test(username);
+}
+
+function validPassword(password) {
+  return password.length >= 8 && /[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password);
+}
+
+function createUser({ username, password, name, role, employeeRecordId = "" }) {
+  const salt = randomBytes(16).toString("hex");
+  return {
+    username,
+    name,
+    role,
+    salt,
+    passwordHash: scryptSync(password, salt, 64).toString("hex"),
+    employeeRecordId,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function sessionFor(user) {
+  const token = randomBytes(32).toString("hex");
+  const session = { username: user.username, name: user.name, role: user.role, expiresAt: Date.now() + sessionDuration };
+  sessions.set(token, session);
+  return { token, user: { name: user.name, role: user.role, username: user.username } };
+}
+
 function isAdmin(session) {
   return /admin/i.test(String(session?.role || ""));
 }
 
 function isPartner(session) {
-  return /franchise|associate/i.test(String(session?.role || ""));
+  return /franchise|partner/i.test(String(session?.role || ""));
 }
 
-function isAssociate(session) {
-  return /associate/i.test(String(session?.role || ""));
+function isIndividualPartner(session) {
+  return /partner/i.test(String(session?.role || ""));
 }
 
 function isAccount(session) {
@@ -103,7 +150,7 @@ function isAccount(session) {
 function canAccessModule(session, module) {
   if (isAdmin(session)) return true;
   if (isAccount(session)) return accountModules.has(module) || accountReadOnlyModules.has(module);
-  if (isPartner(session)) return (isAssociate(session) ? associateModules : franchiseModules).has(module);
+  if (isPartner(session)) return (isIndividualPartner(session) ? partnerModules : franchiseModules).has(module);
   return employeeModules.has(module);
 }
 
@@ -113,14 +160,14 @@ function canModifyModule(session, module) {
 
 function canAccessRecord(session, record) {
   if (!canAccessModule(session, record.module)) return false;
-  if (isAssociate(session) && ["franchise-associate-accounts", "franchise-associate-transactions"].includes(record.module)) return record.owner === session.username || record.contact === session.name;
+  if (isIndividualPartner(session) && ["franchise-partner-accounts", "franchise-partner-transactions"].includes(record.module)) return record.owner === session.username || record.contact === session.name;
   return !isPartner(session) || record.module === "project-status" || record.owner === session.username;
 }
 
 function canModifyRecord(session, record) {
   // Buyer profiles are permanent customer records once created.
   if (record.module === "buyers") return false;
-  if (isAssociate(session) && ["franchise-associate-accounts", "franchise-associate-transactions"].includes(record.module)) return canModifyModule(session, record.module) && (record.owner === session.username || record.contact === session.name);
+  if (isIndividualPartner(session) && ["franchise-partner-accounts", "franchise-partner-transactions"].includes(record.module)) return canModifyModule(session, record.module) && (record.owner === session.username || record.contact === session.name);
   return canModifyModule(session, record.module) && (!isPartner(session) || record.owner === session.username);
 }
 
@@ -144,19 +191,40 @@ function recordFrom(input, existing) {
 }
 
 async function handleApi(request, response, pathname) {
+  if (pathname === "/api/setup-status" && request.method === "GET") {
+    const data = await readDatabase();
+    return send(response, 200, { setupRequired: data.users.length === 0 });
+  }
+
+  if (pathname === "/api/setup" && request.method === "POST") {
+    return serializeDatabaseMutation(async () => {
+      const input = await readBody(request);
+      const username = cleanText(input.username, 80).toLowerCase();
+      const password = String(input.password || "");
+      const name = cleanText(input.name, 140);
+      const data = await readDatabase();
+      if (data.users.length) return send(response, 409, { error: "Initial setup has already been completed. Sign in with an existing account." });
+      if (!validUsername(username)) return send(response, 400, { error: "Login ID must contain 3–80 lowercase letters, numbers, dots, hyphens, or underscores." });
+      if (!validPassword(password)) return send(response, 400, { error: "Use at least 8 characters with uppercase, lowercase, and a number." });
+      if (!name) return send(response, 400, { error: "Administrator name is required." });
+      const user = createUser({ username, password, name, role: "Administrator" });
+      data.users.push(user);
+      await writeDatabase(data);
+      return send(response, 201, sessionFor(user));
+    });
+  }
+
   if (pathname === "/api/login" && request.method === "POST") {
     const { username, password, accessType } = await readBody(request);
     const data = await readDatabase();
     const user = data.users.find((candidate) => candidate.username.toLowerCase() === cleanText(username, 80).toLowerCase());
     const providedHash = user ? scryptSync(String(password || ""), user.salt, 64) : null;
-    const expectedHash = user ? Buffer.from(user.passwordHash, "hex") : null;
-    const valid = Boolean(user && providedHash && timingSafeEqual(providedHash, expectedHash));
+    const expectedHash = user?.passwordHash ? Buffer.from(user.passwordHash, "hex") : null;
+    const valid = Boolean(user && providedHash && expectedHash?.length === providedHash.length && timingSafeEqual(providedHash, expectedHash));
     const requestedRole = cleanText(accessType, 40).toLowerCase();
     const roleMatches = !requestedRole || requestedRole === String(user?.role || "").toLowerCase() || (requestedRole === "admin" && isAdmin(user));
     if (!valid || !roleMatches) return send(response, 401, { error: "Incorrect login ID, password, or access type." });
-    const token = randomBytes(32).toString("hex");
-    sessions.set(token, { username: user.username, name: user.name, role: user.role, expiresAt: Date.now() + sessionDuration });
-    return send(response, 200, { token, user: { name: user.name, role: user.role, username: user.username } });
+    return send(response, 200, sessionFor(user));
   }
 
   if (pathname === "/api/logout" && request.method === "POST") {
@@ -182,14 +250,13 @@ async function handleApi(request, response, pathname) {
       const password = String(input.password || "");
       const name = cleanText(input.name, 140);
       const role = cleanText(input.role, 40);
-      if (!/^[a-z0-9._-]{3,80}$/.test(username)) return send(response, 400, { error: "Login ID must contain 3–80 lowercase letters, numbers, dots, hyphens, or underscores." });
-      if (password.length < 10) return send(response, 400, { error: "Initial password must contain at least 10 characters." });
+      if (!validUsername(username)) return send(response, 400, { error: "Login ID must contain 3–80 lowercase letters, numbers, dots, hyphens, or underscores." });
+      if (!validPassword(password)) return send(response, 400, { error: "Use at least 8 characters with uppercase, lowercase, and a number." });
       if (!name) return send(response, 400, { error: "Account holder name is required." });
-      if (!managedRoles.has(role)) return send(response, 400, { error: "Choose Employee, Franchise, Associate, or Account access." });
+      if (!managedRoles.has(role)) return send(response, 400, { error: "Choose Employee, Franchise, Partner, or Account access." });
       const data = await readDatabase();
       if (data.users.some(user => user.username.toLowerCase() === username)) return send(response, 409, { error: "This login ID is already in use." });
-      const salt = randomBytes(16).toString("hex");
-      const user = { username, name, role, salt, passwordHash: scryptSync(password, salt, 64).toString("hex"), employeeRecordId: cleanText(input.employeeRecordId, 80), createdAt: new Date().toISOString() };
+      const user = createUser({ username, password, name, role, employeeRecordId: cleanText(input.employeeRecordId, 80) });
       data.users.push(user);
       await writeDatabase(data);
       return send(response, 200, { user: { username, name, role, employeeRecordId: user.employeeRecordId, createdAt: user.createdAt } });
@@ -203,14 +270,13 @@ async function handleApi(request, response, pathname) {
       const username = cleanText(input.username, 80).toLowerCase();
       const password = String(input.password || "");
       const name = cleanText(input.name, 140);
-      if (!/^[a-z0-9._-]{3,80}$/.test(username)) return send(response, 400, { error: "Login ID must contain 3–80 lowercase letters, numbers, dots, hyphens, or underscores." });
-      if (password.length < 10) return send(response, 400, { error: "Initial password must contain at least 10 characters." });
+      if (!validUsername(username)) return send(response, 400, { error: "Login ID must contain 3–80 lowercase letters, numbers, dots, hyphens, or underscores." });
+      if (!validPassword(password)) return send(response, 400, { error: "Use at least 8 characters with uppercase, lowercase, and a number." });
       if (!name) return send(response, 400, { error: "Employee name is required." });
       const data = await readDatabase();
       const existing = data.users.find(user => user.username.toLowerCase() === username);
       if (existing) return send(response, 409, { error: "This login ID is already in use." });
-      const salt = randomBytes(16).toString("hex");
-      data.users.push({ username, name, role: "Employee", salt, passwordHash: scryptSync(password, salt, 64).toString("hex"), employeeRecordId: cleanText(input.employeeRecordId, 80) });
+      data.users.push(createUser({ username, password, name, role: "Employee", employeeRecordId: cleanText(input.employeeRecordId, 80) }));
       await writeDatabase(data);
       return send(response, 200, { user: { username, name, role: "Employee" } });
     });
@@ -219,7 +285,7 @@ async function handleApi(request, response, pathname) {
   if (pathname === "/api/password" && request.method === "POST") {
     const { currentPassword, newPassword } = await readBody(request);
     return serializeDatabaseMutation(async () => {
-      if (String(newPassword || "").length < 10) return send(response, 400, { error: "Use a new password with at least 10 characters." });
+      if (!validPassword(String(newPassword || ""))) return send(response, 400, { error: "Use at least 8 characters with uppercase, lowercase, and a number." });
       const data = await readDatabase();
       const user = data.users.find((candidate) => candidate.username === auth.session.username);
       const currentHash = user ? scryptSync(String(currentPassword || ""), user.salt, 64) : null;
@@ -322,5 +388,5 @@ const server = http.createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   console.log(`Jigyasa Group Of Companies is running at http://${host}:${port}`);
-  console.log("Staff login: admin / Jigyasa@2026");
+  console.log("Open /software to complete secure first-run setup or sign in.");
 });

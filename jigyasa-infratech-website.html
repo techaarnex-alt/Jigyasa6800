@@ -29,19 +29,6 @@ const styles = `
   @keyframes riseIn{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
   .jit-rise{animation:riseIn .7s cubic-bezier(.2,.7,.3,1) both;}
 
-  .jit-topbar{background:var(--pine);color:var(--paper);font-size:13px;line-height:1.4;}
-  .jit-topbar .jit-wrap{display:flex;justify-content:space-between;align-items:center;padding:9px 32px;gap:16px;flex-wrap:wrap;}
-  .jit-topbar a:hover{text-decoration:underline;}
-  .jit-topbar-links{display:flex;gap:20px;flex-wrap:wrap;}
-  .jit-topbar .jit-wrap > div{overflow-wrap:break-word;word-break:break-word;}
-  @media(max-width:640px){
-    .jit-topbar .jit-wrap{padding:8px 20px;flex-direction:column;align-items:flex-start;gap:4px;}
-  }
-  @media(max-width:420px){
-    .jit-topbar .jit-wrap{padding:9px 16px;}
-    .jit-topbar-links{gap:14px;}
-  }
-
   nav.jit-nav{background:var(--paper);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50;}
   .jit-adminbar{background:#EAF1F7;border-bottom:1px solid #C9D8E3;}
   .jit-adminbar-inner{display:flex;overflow-x:auto;scrollbar-width:none;}
@@ -70,7 +57,7 @@ const styles = `
   .jit-menu-toggle{display:none;background:none;border:none;cursor:pointer;}
   @media(max-width:1140px){.jit-navlinks{gap:18px;}.jit-navphone span{display:none;}}
   @media(max-width:1040px){.jit-navlinks{display:none;}.jit-menu-toggle{display:block;}}
-  .jit-mobile-menu{display:none;flex-direction:column;border-top:1px solid var(--line);background:var(--paper);}
+  .jit-mobile-menu{display:none;flex-direction:column;position:absolute;top:100%;left:0;right:0;z-index:51;border-top:1px solid var(--line);background:var(--paper);box-shadow:0 12px 20px rgba(16,35,28,0.12);}
   .jit-mobile-menu.open{display:flex;}
   .jit-mobile-menu a{padding:13px 0;border-bottom:1px solid var(--line);font-size:14px;font-weight:500;}
   @media(max-width:640px){
@@ -298,7 +285,7 @@ const SUBPAGES = {
     intro:"Your booking, payments, cheque clearance, registry and possession status all live under one buyer record internally.",
     cards:[["Single buyer file","Booking, payment history and documents are tied to your name and plot number."],
       ["No repeated paperwork","Because your details are on file, follow-up documentation doesn't start from zero."],
-      ["Associate mapping","If you were referred by an associate or promoter, that's recorded too."],
+      ["Partner mapping","If you were referred by an partner or promoter, that's recorded too."],
       ["Access to your status","Ask your coordinator or call our office for a summary of your file anytime."]]},
   "calls": {kicker:"CALL TRACKING", title:"A dedicated desk for buyer & enquiry calls",
     intro:"Calls related to bookings, payments, and site queries are logged and routed to the right person.",
@@ -335,10 +322,10 @@ const SUBPAGES = {
     intro:"Internally, we track detailed reports on sales, payments, registry and possession for every site.",
     cards:[["Sales & business reports","Project-wise sales summaries and business totals, tracked per site."],
       ["Registry & possession reports","Which plots have registry done, which are pending, and possession-due lists."],
-      ["Payment & pendency reports","Cheque clearance status, due instalments, and associate-wise pendency."],
+      ["Payment & pendency reports","Cheque clearance status, due instalments, and partner-wise pendency."],
       ["Ask for your extract","You can request a summary relevant to your own plot anytime."]]},
-  "promoter": {kicker:"PROMOTER NETWORK", title:"Our promoter & associate network",
-    intro:"Promoters and associates represent specific sites on our behalf, and are mapped in our system.",
+  "promoter": {kicker:"PROMOTER NETWORK", title:"Our promoter & partner network",
+    intro:"Promoters and partners represent specific sites on our behalf, and are mapped in our system.",
     cards:[["Site-mapped promoters","Each promoter is assigned to specific sites, not our whole portfolio."],
       ["Verifiable identity","If someone claims to represent us, call our office to confirm before proceeding."],
       ["Payout tracking","Promoter commissions are tracked against actual closed bookings."],
@@ -354,7 +341,7 @@ const SUBPAGES = {
     cards:[["Documented ownership","Your plot is registered in your name, with a file tracking payment and registry history."],
       ["Site selection support","We can walk you through layouts, road access and development stage before you decide."],
       ["Transparent charges","PLC, interest (if any) and registry costs are disclosed upfront."],
-      ["Long-term relationship","Ask us about our associate/investor terms for holding multiple plots over time."]]},
+      ["Long-term relationship","Ask us about our partner/investor terms for holding multiple plots over time."]]},
   "registry": {kicker:"REGISTRY PROCESS", title:"Getting your registry done, step by step",
     intro:"Registry is the legal transfer of the plot into your name — tracked as its own stage in your file.",
     cards:[["When it happens","Once your payment plan is complete, your file moves into the registry queue."],
@@ -378,7 +365,7 @@ const SUBPAGES = {
     internal:true,
     note:"This is an internal, staff-only module for tracking employee attendance. It isn't something customers or partners need to access.",
     cards:[["Internal use only","Monthly and yearly attendance records for staff are maintained here by HR."],
-      ["Not customer-facing","There's nothing here relevant to buyers, investors, or associates."]]},
+      ["Not customer-facing","There's nothing here relevant to buyers, investors, or partners."]]},
   "logout": {kicker:"ACCOUNT", title:"You're not logged in",
     intro:"This is our public website — there's no login required to browse it, book a site visit, or get in touch.",
     internal:true,
@@ -497,15 +484,6 @@ function Nav(){
   const links=[["#projects","Projects"],["#process","How It Works"],["#why","Why Us"],["#partner","Partner With Us"],["#contact","Contact"]];
   return (
     <>
-    <div className="jit-topbar">
-      <div className="jit-wrap">
-        <div className="jit-topbar-links">
-          <a href="tel:+919336081002">+91 93360 81002</a>
-          <a href="mailto:info@jigyasainfratech.com">info@jigyasainfratech.com</a>
-        </div>
-        <div>ISO 9001:2015 Certified — Telibagh, Lucknow</div>
-      </div>
-    </div>
     <nav className="jit-nav">
       <div className="jit-wrap jit-navrow">
         <a href="#top" className="jit-brand" onClick={(e)=>scrollToId(e,'#top')}>
@@ -671,7 +649,7 @@ function WhyUs(){
     {icon:<IconCoins/>, t:"Transparent EMI & charges", d:"Interest, PLC and deductions are disclosed at booking — not discovered later."},
     {icon:<IconShield/>, t:"ISO 9001:2015 certified process", d:"Site creation, plot allotment and payment workflows follow a documented, audited standard."},
     {icon:<IconHeadset/>, t:"A follow-up team, not a hotline", d:"A dedicated coordinator reaches out proactively — registry due, possession due, and beyond."},
-    {icon:<IconUsers/>, t:"An associate & promoter network", d:"Verified brokers mapped to specific sites, so you always know who represents us."},
+    {icon:<IconUsers/>, t:"An partner & promoter network", d:"Verified brokers mapped to specific sites, so you always know who represents us."},
   ];
   return (
     <section className="jit-section" id="why">
@@ -697,14 +675,14 @@ function WhyUs(){
 }
 
 function Partner(){
-  const roles=[["Associate / Broker","Bring buyers to our sites, earn on every closed booking."],["Promoter","Represent a site full-time with mapped territory."],["Franchise Partner","Run a Jigyasa Group Of Companies office in your city."]];
+  const roles=[["Partner / Broker","Bring buyers to our sites, earn on every closed booking."],["Promoter","Represent a site full-time with mapped territory."],["Franchise Partner","Run a Jigyasa Group Of Companies office in your city."]];
   return (
     <section className="jit-section jit-partner" id="partner">
       <div className="jit-wrap jit-partner-grid">
         <div>
           <div className="jit-hero-kicker" style={{color:'#F1E6D8'}}>PARTNER WITH US</div>
           <h2>Grow with a developer that pays on record</h2>
-          <p>Every associate, promoter and franchise is mapped to specific sites — your payouts are tracked on file.</p>
+          <p>Every partner, promoter and franchise is mapped to specific sites — your payouts are tracked on file.</p>
           <a className="jit-btn jit-btn-gold" href="#contact" onClick={(e)=>scrollToId(e,'#contact')} style={{marginTop:'22px',display:'inline-flex'}}>Apply to Partner</a>
         </div>
         <div>
@@ -754,7 +732,6 @@ function Contact(){
           </div>
           <div className="jit-info-row"><div className="ico"><IconPin/></div><div><div className="k">Office Address</div><div className="v">Sector 14/105, Vrindavan Yojan, Telibagh, Lucknow – 226029</div></div></div>
           <div className="jit-info-row"><div className="ico"><IconPhone/></div><div><div className="k">Call Us</div><div className="v">+91 93360 81002</div></div></div>
-          <div className="jit-info-row"><div className="ico"><IconMail/></div><div><div className="k">Email</div><div className="v">info@jigyasainfratech.com</div></div></div>
           <div className="jit-map-frame">
             <iframe
               title="Jigyasa Group Of Companies office location"
@@ -797,11 +774,11 @@ function Footer(){
           <li><a href="#why" onClick={(e)=>scrollToId(e,'#why')}>Why Us</a></li>
         </ul></div>
         <div><h5>Work With Us</h5><ul>
-          <li><a href="#partner" onClick={(e)=>scrollToId(e,'#partner')}>Become an Associate</a></li>
+          <li><a href="#partner" onClick={(e)=>scrollToId(e,'#partner')}>Become an Partner</a></li>
           <li><a href="#partner" onClick={(e)=>scrollToId(e,'#partner')}>Franchise Enquiry</a></li>
           <li><a href="#contact" onClick={(e)=>scrollToId(e,'#contact')}>Careers</a></li>
         </ul></div>
-        <div><h5>Contact</h5><ul><li>Sector 14/105, Vrindavan Yojan,<br/>Telibagh, Lucknow – 226029</li><li>+91 93360 81002</li><li>info@jigyasainfratech.com</li></ul></div>
+        <div><h5>Contact</h5><ul><li>Sector 14/105, Vrindavan Yojan,<br/>Telibagh, Lucknow – 226029</li><li>+91 93360 81002</li></ul></div>
       </div>
       <div className="jit-foot-bottom"><span>© {new Date().getFullYear()} Jigyasa Group Of Companies. All rights reserved.</span><span>Plots shown are illustrative.</span></div>
     </footer>

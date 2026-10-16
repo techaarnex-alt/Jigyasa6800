@@ -282,6 +282,31 @@ async function handleApi(request, response, pathname) {
     });
   }
 
+  if (pathname === "/api/partners" && request.method === "POST") {
+    if (!isAdmin(auth.session)) return send(response, 403, { error: "Only an administrator can add partners and create their login IDs." });
+    return serializeDatabaseMutation(async () => {
+      const input = await readBody(request);
+      const partner = input.record || {};
+      const username = cleanText(input.username, 80).toLowerCase();
+      const password = String(input.password || "");
+      const name = cleanText(partner.title, 140);
+      if (!new Set(["partner-management", "franchise-partners"]).has(partner.module) || partner.id) return send(response, 400, { error: "A new partner profile is required." });
+      if (!name) return send(response, 400, { error: "Partner name is required." });
+      if (!validUsername(username)) return send(response, 400, { error: "Login ID must contain 3–80 lowercase letters, numbers, dots, hyphens, or underscores." });
+      if (!validPassword(password)) return send(response, 400, { error: "Use at least 8 characters with uppercase, lowercase, and a number." });
+      const data = await readDatabase();
+      if (data.users.some(user => user.username.toLowerCase() === username)) return send(response, 409, { error: "This login ID is already in use." });
+      const record = recordFrom(partner, null);
+      data.users.push(createUser({ username, password, name, role: "Partner", employeeRecordId: record.id }));
+      data.records.unshift(record);
+      data.activity = data.activity || [];
+      data.activity.unshift({ id: randomBytes(10).toString("hex"), action: "Created", module: record.module, title: record.title, reference: record.reference, status: record.status, by: auth.session.name, at: new Date().toISOString() });
+      data.activity = data.activity.slice(0, 1000);
+      await writeDatabase(data);
+      return send(response, 201, { record, user: { username, name, role: "Partner" } });
+    });
+  }
+
   if (pathname === "/api/password" && request.method === "POST") {
     const { currentPassword, newPassword } = await readBody(request);
     return serializeDatabaseMutation(async () => {
@@ -313,6 +338,7 @@ async function handleApi(request, response, pathname) {
       const index = input.id ? data.records.findIndex((record) => record.id === input.id) : -1;
       const existing = index >= 0 ? data.records[index] : null;
       if (!supportedModules.has(input.module) && !existing) return send(response, 400, { error: "This dashboard module is not available." });
+      if (["partner-management", "franchise-partners"].includes(input.module) && !existing) return send(response, 400, { error: "Create partners from Partner Management so each partner receives a login ID and password." });
       if (!canModifyModule(auth.session, input.module) || (existing && !canModifyRecord(auth.session, existing))) return send(response, 403, { error: "You do not have permission to change this module or record." });
       if (!isAdmin(auth.session)) input.owner = existing?.owner || auth.session.username;
       if (input.module === "attendance" && !isAdmin(auth.session)) {

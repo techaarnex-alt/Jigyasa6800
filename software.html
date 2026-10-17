@@ -1031,7 +1031,7 @@
         if (!partner || !["Booked", "Sold"].includes(status)) return null;
         const financial = plotFinancials(data);
         return { partner, partnerData:partnerData(partner), plot:record, data, financial, status, date:data.bookingDate || record.updatedAt || record.createdAt };
-      }).filter(Boolean);
+      }).filter(entry => entry && entry.partner && entry.partner.id);
     }
     function filteredPartnerCommissionEntries() {
       const query = String(state.partnerFilter.query || "").trim().toLowerCase();
@@ -1698,7 +1698,9 @@
     function brokerageTdsAmount(record) { const data = partnerFinanceData(record, partnerTransactionPrefix); return moneyValue(data.grossAmount) * brokerageTdsPercent / 100; }
     function brokerageNetAmount(record) { const data = partnerFinanceData(record, partnerTransactionPrefix), gross = moneyValue(data.grossAmount); return gross ? gross - brokerageTdsAmount(record) : moneyValue(record.amount); }
     function renderPartnerManagement(module) {
-      const records = state.records.filter(record => record.module === module.id).sort((a,b) => a.title.localeCompare(b.title));
+      const moduleId = module?.id || "partner-management";
+const records = state.records
+  .filter(record => record && record.module === moduleId).sort((a,b) => a.title.localeCompare(b.title));
       const partners = records.filter(record => partnerFinanceData(record, partnerProfilePrefix).type !== "Co-Partner");
       const selected = records.find(record => record.id === state.selectedId);
       const data = partnerFinanceData(selected, partnerProfilePrefix);

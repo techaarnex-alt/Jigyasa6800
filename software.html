@@ -359,7 +359,7 @@
       ,{ number: 38, id: "franchise-partner-transactions", label: "Partner Transactions", eyebrow: "PARTNER TRANSACTIONS", description: "Record payments to partners with payment mode, TDS and exact net payable amount.", titleLabel: "Transaction description", contactLabel: "Partner", referenceLabel: "Receipt / cheque / UTR", amountLabel: "Payment amount", statuses: ["Pending payment", "Part paid", "Paid"], franchiseOnly: true }
     ];
     const buyerDetailsPrefix = "BUYER_DETAILS:";
-    const employeeModuleIds = new Set(["buyers", "project-status"]);
+    const employeeModuleIds = new Set(["buyers", "project-status", "attendance"]);
     const franchiseModuleIds = new Set(["franchise-buyers", "franchise-booking", "project-status", "franchise-pendency", "franchise-dues", "franchise-sale-report", "franchise-plot-hold"]);
     const partnerModuleIds = new Set(["franchise-buyers", "project-status", "franchise-pendency", "franchise-dues", "franchise-sale-report"]);
     const franchiseModuleOrder = ["franchise-buyers", "franchise-booking", "project-status", "franchise-pendency", "franchise-dues", "franchise-sale-report", "franchise-plot-hold"];
@@ -487,7 +487,9 @@
       const partnerManagedModuleIds = new Set(["franchise-partners", "franchise-partner-accounts", "franchise-partner-transactions"]);
       const dashboardHiddenModuleIds = new Set(["promoter"]);
       const hiddenManagedModuleIds = isAccount() ? new Set(["franchise-partners", "franchise-partner-transactions"]) : partnerManagedModuleIds;
-      const available = visibleModules().filter(module => module.id !== "hr" && !dashboardHiddenModuleIds.has(module.id) && !hiddenManagedModuleIds.has(module.id));
+      // Keep the existing grouped top navigation, while making HR Management
+      // reachable so administrators can add and maintain employee records.
+      const available = visibleModules().filter(module => !dashboardHiddenModuleIds.has(module.id) && !hiddenManagedModuleIds.has(module.id));
       const groupedModuleIds = new Set(moduleGroups.flatMap(group => group.moduleIds));
       const groups = moduleGroups.map(group => ({ ...group, modules:group.moduleIds.map(id => available.find(module => module.id === id)).filter(Boolean) })).filter(group => group.modules.length);
       const ungrouped = available.filter(module => !groupedModuleIds.has(module.id)).map(module => ({ type:"module", module }));
@@ -578,13 +580,18 @@
     function moduleSummary(module) {
       const records = state.records.filter(record => record.module === module.id);
       if (module.id === "project-status") {
-        const available = recordsWithStatus(records, ["available", "empty"]);
-        const booked = recordsWithStatus(records, ["booked"]);
-        const registered = recordsWithStatus(records, ["registered"]);
-        const onHold = recordsWithStatus(records, ["hold"]);
-        const sites = [...new Map(records.map(record => [`${record.title}|${record.contact}`, record])).values()];
-        const rows = sites.map(site => `<div class="insight-row"><span><strong>${esc(site.title || "Site name not added")}</strong><br>${esc(site.contact || "Location not added")}</span><span>${esc(site.reference || "No plot number")} · ${esc(site.status)}</span></div>`).join("") || `<div class="empty">Add a plot record with its site and location to build the live site list.</div>`;
-        return insightPanel("Plot availability", "Each project entry shows a site, its location, plot number, manual rate, and current availability.", [insightCard("Available / empty", available.length, "Plots open for booking"), insightCard("Booked", booked.length, "Plots currently booked"), insightCard("Registered", registered.length, "Registration complete"), insightCard("On hold", onHold.length, "Plots kept on hold")], rows);
+        // Inventory is the source of truth: a booking in Registration updates the
+        // linked Plot Management record, which is reflected here immediately.
+        const inventory = plotRecords();
+        const available = inventory.filter(record => normalizePlotStatus(plotData(record).status) === "Available");
+        const booked = inventory.filter(record => normalizePlotStatus(plotData(record).status) === "Booked");
+        const sold = inventory.filter(record => normalizePlotStatus(plotData(record).status) === "Sold");
+        const onHold = inventory.filter(record => normalizePlotStatus(plotData(record).status) === "Hold");
+        const rows = inventory.slice().sort((a,b) => String(plotData(a).number).localeCompare(String(plotData(b).number), undefined, { numeric:true })).map(record => {
+          const plot = plotData(record), status = normalizePlotStatus(plot.status);
+          return `<div class="insight-row"><span><strong>${esc(plot.project || "Project not selected")} · Plot ${esc(plot.number || record.title)}</strong><br>${esc(plot.block || "Block not selected")}${plot.buyerName ? ` · Buyer: ${esc(plot.buyerName)}` : ""}</span><span>${plotStatusBadge(status)}</span></div>`;
+        }).join("") || records.map(site => `<div class="insight-row"><span><strong>${esc(site.title || "Site name not added")}</strong><br>${esc(site.contact || "Location not added")}</span><span>${esc(site.reference || "No plot number")} · ${esc(site.status)}</span></div>`).join("") || `<div class="empty">Add a plot record with its site and location to build the live site list.</div>`;
+        return insightPanel("Live plot status", "Booked plots from Registration and Plot Management appear here automatically, together with buyer details.", [insightCard("Available", available.length, "Plots open for booking"), insightCard("Booked", booked.length, "Current bookings"), insightCard("Sold / registered", sold.length, "Registration complete"), insightCard("On hold", onHold.length, "Plots kept on hold")], rows);
       }
       if (module.id === "registration") {
         const available = recordsWithStatus(records, ["available"]);
@@ -949,7 +956,7 @@
     }
     function renderPlotOverview() {
       const projects = plotProjects(), blocks = plotEntities("block"), plots = plotRecords();
-      const cards = [["Add project", "Set up a project", "add-project"], ["Add block", "Create blocks under a selected project", "add-block"], ["Add plot", "Create one or multiple plots", "add-plot"], ["Plot pictorial", "See colour-coded plot availability", "pictorial"]];
+      const cards = [["Add project", "Set up a project", "add-project"], ["Add block", "Create blocks under a selected project", "add-block"], ["Add 20 plots", "Create 20 consecutive plots at one time", "add-plot"], ["Plot pictorial", "See colour-coded plot availability", "pictorial"]];
       const financials = plots.map(record => plotFinancials(plotData(record)));
       const inventoryValue = financials.reduce((total, value) => total + value.saleValue, 0);
       const expectedMargin = financials.reduce((total, value) => total + value.netMargin, 0);
@@ -1378,20 +1385,43 @@
     function financeFilterBar(options = {}) {
       const filter = state.daybookFilter;
       const query = options.query ? specialField(options.query, "query", filter.query, { placeholder:"Enter search" }) : "";
-      const project = options.project ? specialSelect("Project", "project", ["All", ...registrationProjects], filter.project) : "";
+      const projects = [...new Set([...registrationProjectNames(), ...expenseRecords().map(record => expenseData(record).project).filter(Boolean)])];
+      const project = options.project ? specialSelect("Project", "project", ["All", ...projects], filter.project) : "";
       const partner = options.partner ? specialSelect("Partner", "partner", ["All", ...partnerRecords().map(record => record.title)], filter.partner) : "";
       const searchType = options.cheque ? specialSelect("Select Search Type", "searchType", ["All", "Project", "Cheque Status", "Which Account", "Payment Category", "Cheque Number", "Bank Name", "Branch Name"], filter.searchType) : "";
       return `<form id="daybookFilterForm" class="panel-body"><div class="plot-fields">${searchType}${query}${partner}${project}${specialField("From", "from", filter.from, { type:"date" })}${specialField("To", "to", filter.to, { type:"date" })}</div><div class="action-row" style="margin-top:16px"><button class="btn btn-gold" type="submit">Search</button><button class="btn btn-outline" type="button" data-action="daybook-filter-reset">Reset</button><button class="btn btn-soft" type="button" data-action="daybook-filter-all">All</button></div></form>`;
     }
+    function ledgerEntryData(record) {
+      if (record.module === "expenses") {
+        const expense = expenseData(record);
+        return {
+          date:expense.date,
+          party:expense.employee,
+          amount:expense.amount,
+          mode:expense.paymentMode,
+          entryType:"Payment",
+          category:expense.category,
+          project:expense.project,
+          reference:expense.reference,
+          description:expense.notes || `${expense.category} · ${expense.employee || expense.project || "Expense"}`
+        };
+      }
+      return daybookData(record);
+    }
     function financeRows(records) {
       let balance = 0, creditTotal = 0, debitTotal = 0;
-      const rows = [...records].sort((a,b) => String(daybookData(a).date).localeCompare(String(daybookData(b).date))).map((record, index) => { const data = daybookData(record), amount = moneyValue(data.amount), previous = balance, credit = data.entryType === "Receipt" ? amount : 0, debit = data.entryType === "Payment" ? amount : 0; balance += credit - debit; creditTotal += credit; debitTotal += debit; return { html:`<tr><td class="muted">${index + 1}</td><td>${formatMoney(previous)}</td><td>${formatMoney(credit)}</td><td>${formatMoney(debit)}</td><td>${formatMoney(balance)}</td><td>${esc(data.description || `${data.category} (${data.party})`)}</td><td>${esc(data.date || "—")}</td><td>${esc(data.mode || "—")}</td></tr>`, credit, debit, balance }; });
+      const rows = [...records].sort((a,b) => String(ledgerEntryData(a).date).localeCompare(String(ledgerEntryData(b).date))).map((record, index) => { const data = ledgerEntryData(record), amount = moneyValue(data.amount), previous = balance, credit = data.entryType === "Receipt" ? amount : 0, debit = data.entryType === "Payment" ? amount : 0; balance += credit - debit; creditTotal += credit; debitTotal += debit; return { html:`<tr><td class="muted">${index + 1}</td><td>${formatMoney(previous)}</td><td>${formatMoney(credit)}</td><td>${formatMoney(debit)}</td><td>${formatMoney(balance)}</td><td>${esc(data.description || `${data.category} (${data.party})`)}</td><td>${esc(data.date || "—")}</td><td>${esc(data.mode || "—")}</td></tr>`, credit, debit, balance }; });
       return { rows:rows.map(row => row.html).join(""), creditTotal, debitTotal, balance };
     }
     function renderFinanceLedger(view) {
       const modes = { "cash-ledger":["Cash"], "bank-ledger":["Bank"], "both-ledger":["Cash", "Bank", "UPI"] }, labels = { "cash-ledger":"Cash Ledger", "bank-ledger":"Bank Ledger", "both-ledger":"Both Ledger" };
-      const records = filteredDaybookRecords(data => modes[view].includes(data.mode)), result = financeRows(records), isBoth = view === "both-ledger";
-      return `<section class="panel"><div class="panel-head"><div><h2>${labels[view]}</h2><div class="hint">Payment history by selected dates and payment mode.</div></div>${isBoth ? `<div class="action-row"><button class="btn btn-soft btn-small" data-action="download">Daybook Excel</button><button class="btn btn-danger btn-small" data-action="daybook-print">Daybook PDF</button></div>` : ""}</div>${financeFilterBar()}<div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>S. No.</th><th>Previous Balance</th><th>Credit Amount</th><th>Debit Amount</th><th>Current Balance</th><th>Description</th><th>Receive</th><th>Mode</th></tr></thead><tbody>${result.rows || `<tr><td colspan="8" class="empty">No records found.</td></tr>`}${isBoth && result.rows ? `<tr style="background:#FFF3C3"><td colspan="2"><strong>Grand Total</strong></td><td><strong>${formatMoney(result.creditTotal)}</strong></td><td><strong>${formatMoney(result.debitTotal)}</strong></td><td><strong>${formatMoney(result.balance)}</strong></td><td colspan="3"></td></tr>` : ""}</tbody></table></div></div></section>`;
+      const daybook = filteredDaybookRecords(data => modes[view].includes(data.mode));
+      const expenses = view === "both-ledger" ? expenseRecords().filter(record => {
+        const data = expenseData(record), filter = state.daybookFilter, text = [data.employee, data.project, data.reference, data.notes, data.category].join(" ").toLowerCase();
+        return modes[view].includes(data.paymentMode) && (!filter.query || text.includes(filter.query.toLowerCase())) && (!filter.from || data.date >= filter.from) && (!filter.to || data.date <= filter.to);
+      }) : [];
+      const records = [...daybook, ...expenses], result = financeRows(records), isBoth = view === "both-ledger";
+      return `<section class="panel"><div class="panel-head"><div><h2>${labels[view]}</h2><div class="hint">Payment history by selected dates and payment mode.${isBoth ? " Expense records are included as debit (Dr) entries." : ""}</div></div>${isBoth ? `<div class="action-row"><button class="btn btn-soft btn-small" data-action="download">Daybook Excel</button><button class="btn btn-danger btn-small" data-action="daybook-print">Daybook PDF</button></div>` : ""}</div>${financeFilterBar()}<div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>S. No.</th><th>Previous Balance</th><th>Credit Amount</th><th>Debit Amount</th><th>Current Balance</th><th>Description</th><th>Receive</th><th>Mode</th></tr></thead><tbody>${result.rows || `<tr><td colspan="8" class="empty">No records found.</td></tr>`}${isBoth && result.rows ? `<tr style="background:#FFF3C3"><td colspan="2"><strong>Grand Total</strong></td><td><strong>${formatMoney(result.creditTotal)}</strong></td><td><strong>${formatMoney(result.debitTotal)}</strong></td><td><strong>${formatMoney(result.balance)}</strong></td><td colspan="3"></td></tr>` : ""}</tbody></table></div></div></section>`;
     }
     function renderTodayEntry() {
       const buttons = [["Office Pay", "Office Expenses Ledger"], ["Employee Salary", "Employee Salary"], ["Kisan Pay", "Kisan Payment"], ["Partner Comm.", "Partner Advanced"], ["Vehicle Pay", "Vehicle Payment"], ["Driver Pay", "Driver Payment"]];
@@ -1404,9 +1434,11 @@
       return `<section class="panel"><div class="panel-head"><div><h2>Cheque Ledger</h2><div class="hint">Search cheque payments by project, account, category, bank, branch, or status.</div></div><button class="btn btn-gold btn-small" data-action="daybook-new-entry" data-category="Cheque Ledger">Add cheque</button></div>${financeFilterBar({ cheque:true, query:"Enter Search" })}<div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>S. No.</th><th>Payment Category</th><th>Cheque Amount</th><th>Cheque Number</th><th>Bank Name</th><th>Branch Name</th><th>Cheque Date</th><th>Remark</th><th>Account</th><th>Added By</th><th>Updated By</th><th>Status</th></tr></thead><tbody>${rows || `<tr><td colspan="12" class="empty">No records found.</td></tr>`}</tbody></table></div></div></section>`;
     }
     function renderOfficeExpenses() {
-      const records = filteredDaybookRecords(data => data.category === "Office Expenses Ledger");
-      const rows = records.map((record, index) => { const data = daybookData(record); return `<tr><td class="muted">${index + 1}</td><td><strong>${esc(data.officeExpense || data.description || "Office expense")}</strong></td><td>${esc(data.project || "—")}</td><td>${esc(data.party || "—")}</td><td>${formatMoney(moneyValue(data.amount))}</td><td>${esc(data.description || "—")}</td><td>${esc(data.date || "—")}</td><td>${esc(data.mode || "—")}</td><td>${esc(data.reference || "—")}</td></tr>`; }).join("");
-      return `<section class="panel"><div class="panel-head"><div><h2>Office Expenses Ledger</h2><div class="hint">Review office expenditure by project, payment recipient, and payment mode.</div></div><div class="action-row"><button class="btn btn-soft btn-small" data-action="download">Daybook Excel</button><button class="btn btn-danger btn-small" data-action="daybook-print">Daybook PDF</button></div></div>${financeFilterBar({ query:"Office Expenses", project:true })}<div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>S. No.</th><th>Office Expenses</th><th>Project</th><th>Payment To</th><th>Amount</th><th>Description</th><th>Receive</th><th>Mode</th><th>Receipt</th></tr></thead><tbody>${rows || `<tr><td colspan="9" class="empty">No records found.</td></tr>`}</tbody></table></div></div></section>`;
+      const daybook = filteredDaybookRecords(data => data.category === "Office Expenses Ledger");
+      const officeExpenses = expenseRecords().filter(record => expenseData(record).category === "Office expense");
+      const records = [...daybook, ...officeExpenses];
+      const rows = records.map((record, index) => { const data = ledgerEntryData(record); return `<tr><td class="muted">${index + 1}</td><td><strong>${esc(data.description || "Office expense")}</strong></td><td>${esc(data.project || "—")}</td><td>${esc(data.party || "—")}</td><td>${formatMoney(moneyValue(data.amount))}</td><td>${esc(data.description || "—")}</td><td>${esc(data.date || "—")}</td><td>${esc(data.mode || "—")}</td><td>${esc(data.reference || "—")}</td></tr>`; }).join("");
+      return `<section class="panel"><div class="panel-head"><div><h2>Office Expenses Ledger</h2><div class="hint">Office expenses saved in Expenses and legacy Daybook entries are shown here.</div></div><div class="action-row"><button class="btn btn-gold btn-small" data-action="switch" data-module="expenses">Add office expense</button><button class="btn btn-soft btn-small" data-action="download">Daybook Excel</button><button class="btn btn-danger btn-small" data-action="daybook-print">Daybook PDF</button></div></div>${financeFilterBar({ query:"Office Expenses", project:true })}<div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>S. No.</th><th>Office Expenses</th><th>Project</th><th>Payment To</th><th>Amount</th><th>Description</th><th>Receive</th><th>Mode</th><th>Receipt</th></tr></thead><tbody>${rows || `<tr><td colspan="9" class="empty">No office-expense entries found.</td></tr>`}</tbody></table></div></div></section>`;
     }
     function renderPartnerAdvanced() {
       const records = filteredDaybookRecords(data => data.category === "Partner Advanced");
@@ -1455,9 +1487,11 @@
     function renderHrManagement() { const content = state.hrView === "hr-profile" ? renderHrProfile() : state.hrView === "add-employee" ? renderEmployeeForm() : state.hrView === "view-employee" ? renderEmployeeDirectory() : renderEmployeeLedger(); return layout(`<section class="page-head"><div><div class="eyebrow">HUMAN RESOURCES</div><h1>HR Management</h1><p class="hint">Manage employee profiles, employee records, and the employee payment ledger.</p></div><div class="action-row"><button class="btn btn-outline" data-action="hr-view" data-view="view-employee">View Employee</button><button class="btn btn-gold" data-action="hr-view" data-view="add-employee">Add Employee</button></div></section>${hrTabs()}${content}`); }
     function renderAttendanceManagement() {
       const ownRecords = state.records.filter(record => record.module === "attendance" && (isAdmin() || record.contact === state.user?.username));
+      const employees = hrRecords().map(record => hrData(record)).filter(employee => employee.name);
       const rows = ownRecords.sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt)).map((record, index) => `<tr><td class="muted">${index + 1}</td><td><strong>${esc(record.title)}</strong></td><td>${esc(record.status)}</td><td>${esc(record.reference || "Location not captured")}</td><td>${shortDate(record.updatedAt)}</td></tr>`).join("");
       const employeeAction = !isAdmin() ? `<button class="btn btn-gold" data-action="attendance-locate">Mark Present from Current Location</button>` : "";
-      return layout(`<section class="page-head"><div><div class="eyebrow">LOCATION-VERIFIED ATTENDANCE</div><h1>Attendance Management</h1><p class="hint">${isAdmin() ? "Review employee attendance records and their submitted location coordinates." : "Your current device location is required before you can mark yourself present."}</p></div><div class="action-row">${employeeAction}</div></section>${!isAdmin() ? `<section class="panel module-insight"><div class="panel-head"><div><h2>Mark your attendance</h2><div class="hint">Allow location access when prompted. Your name and login ID are set automatically; you cannot mark attendance for another employee.</div></div></div><div class="panel-body"><div class="action-row"><button class="btn btn-gold" data-action="attendance-locate">Capture location & mark present</button></div></div></section>` : ""}<section class="panel"><div class="panel-head"><div><h2>${isAdmin() ? "Employee attendance" : "Your attendance history"}</h2><div class="hint">${ownRecords.length} record${ownRecords.length === 1 ? "" : "s"} shown</div></div></div><div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>S. No.</th><th>Employee</th><th>Status</th><th>Captured Location</th><th>Date</th></tr></thead><tbody>${rows || `<tr><td colspan="5" class="empty">No attendance records found.</td></tr>`}</tbody></table></div></div></section>`);
+      const adminEntry = isAdmin() ? `<section class="plot-form-layout"><form id="attendanceEntryForm" class="plot-form"><div class="plot-form-head"><div><h2>Add attendance entry</h2><p>Record an employee’s attendance for a date. Employee self-check-in continues to require their current device location.</p></div></div><div class="plot-form-body"><div class="plot-fields">${specialSelect("Employee", "employee", ["Select employee", ...employees.map(employee => employee.name)], "Select employee")}${specialField("Attendance date", "date", todayInputValue(), { type:"date", required:true })}${specialSelect("Status", "status", ["Present", "Absent", "Leave", "Half day"], "Present")}${specialField("Remark", "notes", "", { type:"textarea", full:true, placeholder:"Optional reason or note" })}</div></div><div class="plot-form-actions"><button class="btn btn-gold" type="submit" ${employees.length ? "" : "disabled"}>Save attendance entry</button></div></form><aside class="plot-aside"><h3>Attendance entry</h3><p>${employees.length ? "Choose an employee and record the date and status." : "Add an employee in HR Management first, then return here to create entries."}</p></aside></section>` : "";
+      return layout(`<section class="page-head"><div><div class="eyebrow">LOCATION-VERIFIED ATTENDANCE</div><h1>Attendance Management</h1><p class="hint">${isAdmin() ? "Add and review employee attendance entries. Employee self-check-ins retain location verification." : "Your current device location is required before you can mark yourself present."}</p></div><div class="action-row">${employeeAction}</div></section>${adminEntry}${!isAdmin() ? `<section class="panel module-insight"><div class="panel-head"><div><h2>Mark your attendance</h2><div class="hint">Allow location access when prompted. Your name and login ID are set automatically; you cannot mark attendance for another employee.</div></div></div><div class="panel-body"><div class="action-row"><button class="btn btn-gold" data-action="attendance-locate">Capture location & mark present</button></div></div></section>` : ""}<section class="panel"><div class="panel-head"><div><h2>${isAdmin() ? "Employee attendance" : "Your attendance history"}</h2><div class="hint">${ownRecords.length} record${ownRecords.length === 1 ? "" : "s"} shown</div></div></div><div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>S. No.</th><th>Employee</th><th>Status</th><th>Captured Location</th><th>Date</th></tr></thead><tbody>${rows || `<tr><td colspan="5" class="empty">No attendance records found.</td></tr>`}</tbody></table></div></div></section>`);
     }
     const adminSections = [
       ["Site Administrator", ["Create Site", "Manual Plot Create", "Plot Extension", "Plot Update", "Project Manipulation", "Dimension Release", "LCC"]],
@@ -1597,12 +1631,25 @@
       popup.focus();
       popup.print();
     }
+    function reportScope(tool) {
+      const name = String(tool || "").toLowerCase();
+      if (/expense|daybook|cheque/.test(name)) return { label:"Expense and daybook entries", modules:["expenses", "daybook"] };
+      if (/attendance|employee|calling|tele/.test(name)) return { label:"Employee, attendance, calls and follow-ups", modules:["hr", "attendance", "calls", "follow-up"] };
+      if (/sales|plot|registry|possession|ownership|transfer|booking|payment/.test(name)) return { label:"Plots, registrations and registry activity", modules:["plot-management", "registration", "registry"] };
+      if (/investor/.test(name)) return { label:"Investor records", modules:["investor"] };
+      if (/farmer|kisan|land|khasra/.test(name)) return { label:"Land and Kisan records", modules:["kisan", "land-management"] };
+      if (/promoter|partner|payout|bonanza/.test(name)) return { label:"Partner and promoter records", modules:["partner-management", "franchise-partners", "franchise-partner-accounts", "franchise-partner-transactions", "promoter"] };
+      if (/pendency|due/.test(name)) return { label:"Follow-up and pending records", modules:["follow-up", "calls", "pending-balance-report", "franchise-pendency", "franchise-dues"] };
+      return { label:"Company operations records", modules:null };
+    }
     function renderReportsPanel() {
       if (isAccount()) return renderExpenseReport();
       if (!state.reportTool) return layout(`<section class="page-head"><div><div class="eyebrow">REPORTS</div><h1>Reports & analysis</h1><p class="hint">Open a report category from the reference dashboard to review the corresponding current records.</p></div></section>${toolDirectory(reportSections, "report-tool", "")}`);
       if (state.reportTool === 'Project / Block Income & Partner Work') return renderProjectBlockIncomeReport();
-      const records = state.records, totals = { records:records.length, value:totalAmount(records), kept:records.filter(record => record.kept).length, updated:[...records].sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt)).slice(0, 12) };
-      return layout(`<section class="page-head"><div><div class="eyebrow">REPORTS</div><h1>${esc(state.reportTool)}</h1><p class="hint">Live summary from the current dashboard records.</p></div><div class="action-row"><button class="btn btn-soft" data-action="download">Download CSV</button><button class="btn btn-outline" data-action="report-home">All Reports</button></div></section><section class="insight-grid"><article class="insight-card"><div class="insight-label">Records</div><div class="insight-value">${totals.records}</div><div class="insight-note">Current source entries</div></article><article class="insight-card"><div class="insight-label">Value</div><div class="insight-value">${formatMoney(totals.value)}</div><div class="insight-note">Parsed saved values</div></article><article class="insight-card"><div class="insight-label">Kept</div><div class="insight-value">${totals.kept}</div><div class="insight-note">Marked attention records</div></article></section><section class="panel" style="margin-top:20px"><div class="panel-head"><div><h2>Recent source records</h2><div class="hint">Use the CSV download for the full report data.</div></div></div><div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>Module</th><th>Title</th><th>Reference</th><th>Amount</th><th>Status</th><th>Updated</th></tr></thead><tbody>${totals.updated.map(record => `<tr><td>${esc(modules.find(module => module.id === record.module)?.label || record.module)}</td><td><strong>${esc(record.title)}</strong></td><td>${esc(record.reference || "—")}</td><td>${esc(record.amount || "—")}</td><td>${esc(record.status)}</td><td>${shortDate(record.updatedAt)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No records found.</td></tr>`}</tbody></table></div></div></section>`);
+      const scope = reportScope(state.reportTool);
+      const records = state.records.filter(record => !scope.modules || scope.modules.includes(record.module));
+      const totals = { records:records.length, value:totalAmount(records), kept:records.filter(record => record.kept).length, updated:[...records].sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt)).slice(0, 12) };
+      return layout(`<section class="page-head"><div><div class="eyebrow">REPORTS</div><h1>${esc(state.reportTool)}</h1><p class="hint">${esc(scope.label)} — this report uses only its relevant live records.</p></div><div class="action-row"><button class="btn btn-soft" data-action="download">Download CSV</button><button class="btn btn-outline" data-action="report-home">All Reports</button></div></section><section class="insight-grid"><article class="insight-card"><div class="insight-label">Records</div><div class="insight-value">${totals.records}</div><div class="insight-note">Relevant source entries</div></article><article class="insight-card"><div class="insight-label">Value</div><div class="insight-value">${formatMoney(totals.value)}</div><div class="insight-note">Parsed saved values</div></article><article class="insight-card"><div class="insight-label">Kept</div><div class="insight-value">${totals.kept}</div><div class="insight-note">Marked attention records</div></article></section><section class="panel" style="margin-top:20px"><div class="panel-head"><div><h2>Recent relevant records</h2><div class="hint">Use the CSV download for the full report data.</div></div></div><div class="panel-body"><div class="plot-table-wrap"><table class="plot-table"><thead><tr><th>Module</th><th>Title</th><th>Reference</th><th>Amount</th><th>Status</th><th>Updated</th></tr></thead><tbody>${totals.updated.map(record => `<tr><td>${esc(modules.find(module => module.id === record.module)?.label || record.module)}</td><td><strong>${esc(record.title)}</strong></td><td>${esc(record.reference || "—")}</td><td>${esc(record.amount || "—")}</td><td>${esc(record.status)}</td><td>${shortDate(record.updatedAt)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No records found for this report.</td></tr>`}</tbody></table></div></div></section>`);
     }
     const investorPrefix = "INVESTOR_PROFILE:";
     const investorViews = [["investor-profile", "Investor Profile"], ["payment-taken", "Payment Taken"], ["interest-schedule", "Interest Schedule"], ["payment-history", "Payment History"]];
@@ -2089,6 +2136,18 @@ const records = state.records
       renderApp();
       showNotice("Present marked with your current location.");
     }
+    async function saveAttendanceEntry() {
+      const form = document.getElementById("attendanceEntryForm");
+      if (!form?.reportValidity()) return;
+      if (!isAdmin()) throw new Error("Only an administrator can add attendance for another employee.");
+      const raw = Object.fromEntries(new FormData(form));
+      if (!raw.employee || raw.employee === "Select employee") throw new Error("Select an employee.");
+      const employee = hrRecords().map(record => hrData(record)).find(item => item.name === raw.employee);
+      const result = await api("/api/records", { method:"POST", body:JSON.stringify({ module:"attendance", title:raw.employee, contact:employee?.loginId || "", reference:`Manual entry · ${raw.date}`, amount:"", status:raw.status, notes:`Attendance entered by administrator${raw.notes ? ` · ${raw.notes}` : ""}.`, kept:false, locked:false }) });
+      state.records.unshift(result.record);
+      renderApp();
+      showNotice("Attendance entry saved.");
+    }
     async function saveRegistrationBooking(pdfWindow = null) {
       const form = document.getElementById("registrationBookingForm");
       if (!form.reportValidity()) return;
@@ -2275,6 +2334,10 @@ const records = state.records
       if (formId === "employeeLedgerForm") {
         event.preventDefault();
         try { await saveEmployeeLedger(); } catch (error) { showNotice(error.message, "error"); }
+      }
+      if (formId === "attendanceEntryForm") {
+        event.preventDefault();
+        try { await saveAttendanceEntry(); } catch (error) { showNotice(error.message, "error"); }
       }
       if (formId === "adminToolForm") {
         event.preventDefault();

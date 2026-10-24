@@ -12,7 +12,8 @@ const sessionDuration = 1000 * 60 * 60 * 8;
 let databaseMutationQueue = Promise.resolve();
 const supportedModules = new Set(["buyers", "project-status", "registration", "promoter", "daybook", "investor", "registry", "hr", "attendance", "follow-up", "calls", "kisan", "expenses", "report", "admin", "accounts", "notes", "plot-management", "partner-management", "finance-management", "land-management", "driver-management", "vehicle-management", "crm", "visitor-management", "customer-management", "task-management", "project-report", "pending-balance-report", "franchise-buyers", "franchise-booking", "franchise-pendency", "franchise-dues", "franchise-sale-report", "franchise-plot-hold", "franchise-partners", "franchise-partner-accounts", "franchise-partner-transactions"]);
 const adminOnlyModules = new Set(["investor", "kisan", "report", "accounts", "finance-management", "project-report", "pending-balance-report", "admin"]);
-const employeeModules = new Set(["buyers", "project-status"]);
+// Staff can view project availability and record only their own attendance.
+const employeeModules = new Set(["buyers", "project-status", "attendance"]);
 const franchiseModules = new Set(["franchise-buyers", "franchise-booking", "project-status", "franchise-pendency", "franchise-dues", "franchise-sale-report", "franchise-plot-hold"]);
 const partnerModules = new Set(["franchise-buyers", "project-status", "franchise-pendency", "franchise-dues", "franchise-sale-report"]);
 const accountModules = new Set(["expenses", "report", "registration", "daybook", "registry", "plot-management", "land-management", "franchise-partner-accounts"]);
